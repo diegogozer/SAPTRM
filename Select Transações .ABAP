@@ -1,7 +1,7 @@
 
 
 ***** Diego Gozer
-***** Lógica Deals Tabelas Transação Financeira:
+***** Deals Tabelas Transação Financeira:
 
 
 
@@ -10,6 +10,7 @@
 &---------------------------------------------------------------------*
 *&      Form  READ_VTBFHA
 *&---------------------------------------------------------------------*
+
 form read_vtbfha.
 
 * deal (VTBFHA)
