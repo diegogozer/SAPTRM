@@ -1,0 +1,233 @@
+FUNCTION fti_ldb_get_otc_deal1_data .
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(I_BUKRS) TYPE  BUKRS
+*"     REFERENCE(I_RFHA) TYPE  TB_RFHA
+*"     REFERENCE(I_FLAG_ONLY_ACTIVE_DEAL) TYPE  XFELD OPTIONAL
+*"     REFERENCE(I_FLAG_ONLY_EFFECTIVE_DEAL) TYPE  XFELD OPTIONAL
+*"     REFERENCE(I_FLAG_WITH_FLOWS) TYPE  XFELD DEFAULT SPACE
+*"     REFERENCE(I_DATE) TYPE  SY-DATUM OPTIONAL
+*"  EXPORTING
+*"     VALUE(E_OTC_DEAL1_ATTRIBUTES) TYPE  FTI_LDB_TR_OTC_DEAL_1
+*"     VALUE(E_OTC_DEAL1_FLOWS) TYPE  FTI_LDB_TR_DEAL_FLOWS_T
+*"     VALUE(E_ERROR) TYPE  BAPIERR_T
+*"  EXCEPTIONS
+*"      NOT_FOUND
+*"      DUPLICATE_DEAL_ENTRIES
+*"      DEAL_NOT_ACTIVE
+*"      NO_OTC_DEAL
+*"      OTC_DEAL_NOT_IN_LIFETIME
+*"      UNSPECIFIED_SELECTION_ERROR
+*"----------------------------------------------------------------------
+
+  DATA: l_date              LIKE sy-datum,
+        l_cnt               TYPE i,
+        lwa_rsdsselopt      LIKE rsdsselopt,
+        lt_selopt_t         TYPE rsds_selopt_t,
+        lwa_rsds_frange     TYPE rsds_frange,
+        lt_rsds_frange_t    TYPE rsds_frange_t,
+        lt_ccsel            TYPE ftis_ys_single_dat_ldb_sel,
+        lt_ccsf             TYPE rsfs_fields,
+        lt_tab_otc          TYPE TABLE OF fti_ldb_tr_otc_deal_1,
+        lt_main_data        TYPE fti_ldb_tr_deal_main_t,
+        lt_flow_data        TYPE FTI_LDB_TR_DEAL_FLOWS_T,
+        lwa_main_data       TYPE fti_ldb_tr_deal_main,
+        lt_con_ldb_structure  TYPE ddobjname
+                              VALUE 'FTI_LDB_TR_OTC_DEAL_1',
+        lt_con_ldb_flow_structure    TYPE ddobjname
+                                     VALUE 'FTI_LDB_TR_DEAL_FLOWS',
+
+        lwa_vtbfha          TYPE vtbfha,
+        lt_error            TYPE bapierr_t,
+        lwa_error           TYPE bapierr.
+
+
+  STATICS:s_flag             TYPE char1,
+          swa_rsds_frange    TYPE rsds_frange,
+          st_ccsf_just_main  TYPE rsfs_fields,
+          st_ccsf_with_flows TYPE rsfs_fields.
+
+
+*** preps in first call of function module:
+  IF s_flag = space.
+
+    s_flag = 'X'.
+****fill field names for the structure
+    PERFORM fill_static_ccsf
+              USING lt_con_ldb_structure
+                    'MAIN_DATA'
+              CHANGING st_ccsf_just_main.
+
+****fill field names for the flow structure
+    st_ccsf_with_flows[] = st_ccsf_just_main[].
+    PERFORM fill_static_ccsf
+            USING lt_con_ldb_flow_structure
+                  'FLOWS'
+            CHANGING st_ccsf_with_flows.
+
+***fill product categories
+    PERFORM fill_static_wrk_ccsel
+            USING    lt_con_ldb_structure
+            CHANGING swa_rsds_frange.
+
+  ENDIF.
+
+*** select the requested field table:
+  IF i_flag_with_flows = 'X'.
+    lt_ccsf[] = st_ccsf_with_flows[].
+  ELSE.
+    lt_ccsf[] = st_ccsf_just_main[].
+  ENDIF.
+
+  APPEND swa_rsds_frange TO lt_rsds_frange_t.
+
+*** fill & transform selections
+  IF i_date IS INITIAL.
+    l_date = sy-datum.
+  ELSE.
+    l_date = i_date.
+  ENDIF.
+
+  CLEAR   lt_selopt_t.
+  REFRESH lt_selopt_t.
+  CLEAR lwa_rsds_frange.
+  CLEAR lwa_rsdsselopt.
+  lwa_rsdsselopt-sign   = 'I'.
+  lwa_rsdsselopt-option = 'EQ'.
+  lwa_rsdsselopt-low    = i_bukrs.
+  CLEAR lwa_rsdsselopt-high.
+  APPEND lwa_rsdsselopt TO lt_selopt_t.
+  lwa_rsds_frange-selopt_t  = lt_selopt_t.
+  lwa_rsds_frange-fieldname = 'COMPANYCODE'.                "#EC NOTEXT
+  APPEND lwa_rsds_frange TO lt_rsds_frange_t.
+
+  CLEAR   lt_selopt_t.
+  REFRESH lt_selopt_t.
+  CLEAR lwa_rsds_frange.
+  CLEAR lwa_rsdsselopt.
+  lwa_rsdsselopt-sign   = 'I'.
+  lwa_rsdsselopt-option = 'EQ'.
+  lwa_rsdsselopt-low    = i_rfha.
+  CLEAR lwa_rsdsselopt-high.
+  APPEND lwa_rsdsselopt TO lt_selopt_t.
+  lwa_rsds_frange-selopt_t  = lt_selopt_t.
+  lwa_rsds_frange-fieldname = 'DEAL_NUMBER'.                "#EC NOTEXT
+  APPEND lwa_rsds_frange TO lt_rsds_frange_t.
+
+  CLEAR   lt_selopt_t.
+  REFRESH lt_selopt_t.
+  CLEAR lwa_rsds_frange.
+  CLEAR lwa_rsdsselopt.
+  lwa_rsdsselopt-sign   = 'I'.
+  lwa_rsdsselopt-option = 'EQ'.
+  lwa_rsdsselopt-low    = l_date.
+  CLEAR lwa_rsdsselopt-high.
+  APPEND lwa_rsdsselopt TO lt_selopt_t.
+  lwa_rsds_frange-selopt_t  = lt_selopt_t.
+  lwa_rsds_frange-fieldname = 'KEYDATE'.                    "#EC NOTEXT
+  APPEND lwa_rsds_frange TO lt_rsds_frange_t.
+
+  IF i_flag_only_active_deal = 'X'.
+    CLEAR   lt_selopt_t.
+    REFRESH lt_selopt_t.
+    CLEAR lwa_rsds_frange.
+    CLEAR lwa_rsdsselopt.
+    lwa_rsdsselopt-sign   = 'I'.
+    lwa_rsdsselopt-option = 'EQ'.
+    lwa_rsdsselopt-low    = '0'.   " = only active deals
+    CLEAR lwa_rsdsselopt-high.
+    APPEND lwa_rsdsselopt TO lt_selopt_t.
+    lwa_rsds_frange-selopt_t  = lt_selopt_t.
+    lwa_rsds_frange-fieldname = 'DEAL_ACTIVE'.              "#EC NOTEXT
+    APPEND lwa_rsds_frange TO lt_rsds_frange_t.
+  ENDIF.
+
+  lt_ccsel-range = lt_rsds_frange_t.
+  lt_ccsel-datum = l_date.
+
+
+*****Select Deal Data********
+  CALL FUNCTION 'FTI_LDB_READ_MAIN_DEAL_DATA'
+    EXPORTING
+      i_ccsel       = lt_ccsel
+      i_ccsf        = lt_ccsf
+    IMPORTING
+      e_errors      = lt_error
+      e_main_result = lt_main_data
+      e_flow_result = lt_flow_data.
+
+***Delete error with mesg number 45********
+  LOOP AT lt_error  INTO lwa_error WHERE msgnr = '045'.
+    DELETE lt_error INDEX SY-TABIX.
+  ENDLOOP.
+
+  e_error = lt_error.
+
+* We check the liftetime of the deal and include the notice_date, too.
+  IF i_flag_only_effective_deal IS NOT INITIAL.
+    LOOP AT lt_main_data INTO lwa_main_data.
+      IF   ( lwa_main_data-start_term IS NOT INITIAL
+             AND l_date LT lwa_main_data-start_term )
+        OR ( lwa_main_data-end_term IS NOT INITIAL
+             AND lwa_main_data-end_term LT l_date )
+        OR ( lwa_main_data-notice_date IS NOT INITIAL
+             AND lwa_main_data-notice_date LE l_date )
+* for Product Category 760 - OTC Currency Option, in activity Termination or Termination Settlement
+* when the termination date is before the key date => delete the main data
+        OR ( lwa_main_data-product_cat = '760'
+             AND ( lwa_main_data-activity_cat = '80' OR lwa_main_data-activity_cat = '90' )
+             AND lwa_main_data-contract_date LE l_date ).
+        DELETE lt_main_data.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+*****Exception handling********
+*describe table n chk for more than one record..
+  DESCRIBE TABLE lt_main_data LINES l_cnt.
+
+  IF l_cnt > 1.         "Error, more than one record found
+    MESSAGE ID 'FTI_LDB_MESSAGE' TYPE 'E' NUMBER 204
+            RAISING duplicate_deal_entries.
+
+  ELSEIF l_cnt = 0.     "No OTC deal data found
+    SELECT SINGLE sanlf saktiv DELFZ
+           INTO CORRESPONDING FIELDS OF lwa_vtbfha
+           FROM vtbfha
+           WHERE  bukrs = i_bukrs
+           AND    rfha = i_rfha.
+    IF sy-subrc = 0.
+      CASE lwa_vtbfha-sanlf.
+        WHEN '510' OR '520' OR '530' OR '540' OR '550' OR '560' OR
+             '600' OR '610' OR '620' OR '630' OR '710' OR '712' OR
+             '730' OR '740' OR '760' OR '770' OR '780' OR '640' OR '810'.
+          IF lwa_vtbfha-saktiv <> 0."OTC deal not active
+            IF lwa_vtbfha-delfz < l_date AND i_flag_only_active_deal <> 'X'.
+            MESSAGE ID 'FTI_LDB_MESSAGE' TYPE 'E' NUMBER 212
+                    RAISING OTC_DEAL_NOT_IN_LIFETIME.
+            ELSE.
+            MESSAGE ID 'FTI_LDB_MESSAGE' TYPE 'E' NUMBER 202
+                    RAISING deal_not_active.
+            ENDIF.
+          ELSE.
+            MESSAGE ID 'FTI_LDB_MESSAGE' TYPE 'E' NUMBER 212
+                    RAISING OTC_DEAL_NOT_IN_LIFETIME.
+          ENDIF.
+        WHEN OTHERS."Not an OTC deal
+          MESSAGE ID 'FTI_LDB_MESSAGE' TYPE 'E' NUMBER 203
+                  RAISING no_otc_deal.
+      ENDCASE.
+    ELSE. "Deal number not found
+      MESSAGE ID 'FTI_LDB_MESSAGE' TYPE 'E' NUMBER 201
+              RAISING not_found.
+    ENDIF.
+  ELSE.
+    LOOP AT lt_main_data INTO lwa_main_data.
+      MOVE-CORRESPONDING lwa_main_data TO e_otc_deal1_attributes.
+    ENDLOOP.
+  ENDIF.
+
+  e_otc_deal1_flows = lt_flow_data[].
+
+ENDFUNCTION.                   "#EC CI_VALPAR
